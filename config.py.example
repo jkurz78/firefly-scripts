@@ -1,0 +1,160 @@
+"""
+Firefly III Scripts — Shared Configuration
+============================================
+All scripts (firefly_morning_report.py, firefly_ai_categorize.py,
+firefly_fraud_detection.py) load their settings from this file.
+
+Copy this file to config.py and fill in your values.
+config.py is excluded from Git via .gitignore — never commit it.
+
+Deploy to: /volume1/docker/firefly/config.py
+"""
+
+# ============================================================
+# FIREFLY III
+# ============================================================
+
+FIREFLY_URL   = "https://firefly.yourdomain.com"
+FIREFLY_TOKEN = "YOUR_PERSONAL_ACCESS_TOKEN"
+
+# ============================================================
+# ANTHROPIC API  (used by firefly_ai_categorize.py)
+# ============================================================
+
+ANTHROPIC_API_KEY = "sk-ant-YOUR_ANTHROPIC_API_KEY"
+
+# ============================================================
+# EMAIL — shared settings
+# Individual scripts define their own SMTP_FROM below.
+# ============================================================
+
+SMTP_HOST       = "your.smtp.host"
+SMTP_PORT       = 587
+SMTP_USER       = "your@email.com"
+SMTP_PASS       = "yourpassword"
+SMTP_TO         = "your@email.com"
+MAIL_ENCRYPTION = "tls"   # "tls", "ssl", or "none"
+
+# Per-script sender addresses
+SMTP_FROM_MORNING_REPORT = "Firefly III Rapport quotidien <firefly-report@yourdomain.com>"
+SMTP_FROM_CATEGORIZE     = "Firefly III Catégorisation IA <firefly-ai@yourdomain.com>"
+SMTP_FROM_FRAUD          = "Firefly III recherche de fraudes <firefly-fraud@yourdomain.com>"
+SMTP_FROM_ANALYSIS       = "Firefly III Analyse AI hebdo <firefly-analysis@yourdomain.com>"
+
+# ============================================================
+# SHARED TAGS  (must be identical across all scripts)
+# ============================================================
+
+# Tag added by firefly_ai_categorize.py when it assigns a merchant name.
+# firefly_fraud_detection.py uses this to flag unvalidated AI merchants.
+AI_MERCHANT_TAG = "ai-marchand"
+
+# Tag you manually add in Firefly to approve an AI-assigned merchant.
+# Skips the transaction in both categorize and fraud detection.
+VERIFIED_TAG = "VERIFIED"
+
+# ============================================================
+# MORNING REPORT  (firefly_morning_report.py)
+# ============================================================
+
+# Tag prefix used by the data importer.
+# Full tag format: "Data Import on YYYY-MM-DD @ HH:MM"
+# Matched by date prefix: "Data Import on YYYY-MM-DD"
+AUTO_IMPORT_TAG = "Data Import"
+
+# How many hours back to scan the importer container log for errors
+IMPORT_LOG_LOOKBACK_HOURS = 24
+
+# How many days of history to show in balance evolution charts
+CHART_LOOKBACK_DAYS = 7
+
+# Mounted log file from the importer-auto container.
+# Requires volume mount in docker-compose.yml:
+#   /volume1/docker/firefly/logs/importer-auto.log:/var/www/html/storage/logs/laravel.log:rw
+IMPORTER_LOG_FILE = "/volume1/docker/firefly/logs/importer-auto.log"
+
+# Log lines matching these patterns are considered real errors.
+# Case-insensitive substring match.
+IMPORTER_ERROR_KEYWORDS = ["exception", "fatal", "traceback", "timed out", "connection refused"]
+
+# Log lines containing any of these patterns are NOT treated as errors,
+# even if they contain an error-level keyword.
+IMPORTER_ERROR_IGNORE_PATTERNS = [
+    "exit code is success",
+    "ce nom est déjà utilisé",
+    "this name has already been used",
+]
+
+# Accounts to show in the balance section.
+# If empty, ALL active asset accounts are shown.
+MONITORED_ACCOUNTS = [
+    # "BNP Paribas Compte Courant",
+    # "Fortunéo Compte Courant",
+]
+
+# Per-account low balance thresholds (account name → minimum balance in €).
+# Accounts not listed use LOW_BALANCE_DEFAULT.
+LOW_BALANCE_THRESHOLDS = {
+    # "BNP Paribas Compte Courant": 500,
+    # "Fortunéo Compte Courant":    200,
+}
+LOW_BALANCE_DEFAULT = 200
+
+# ============================================================
+# TRANSACTION VALIDATOR  (firefly_validator.py)
+# ============================================================
+
+# Public URL of the validator service (reverse proxy)
+VALIDATOR_URL = "https://validator.yourdomain.com"
+
+# Secret key for HMAC signing of validation links (min 32 random chars)
+# Generate with: python3 -c "import secrets; print(secrets.token_hex(32))"
+VALIDATOR_SECRET = "YOUR_RANDOM_64HEX_SECRET"
+
+# How many hours a validation link remains valid
+VALIDATOR_TOKEN_EXPIRY_HOURS = 24
+
+# ============================================================
+# MORNING REPORT  (firefly_morning_report.py) — continued
+# ============================================================
+
+# Seconds to wait between AI categorization and fraud detection
+SETTLE_DELAY = 30
+
+# Directory containing all Firefly scripts
+SCRIPT_DIR = "/volume1/docker/firefly"
+
+# ============================================================
+# AI CATEGORIZATION  (firefly_ai_categorize.py)
+# ============================================================
+
+CATEGORIZE_LOOKBACK_HOURS = 48
+CONFIDENCE_THRESHOLD = 0.75
+ENRICH_NOTES = True
+
+NO_MERCHANT_SKIP_KEYWORDS = ["ret dab", "retrait dab", "retrait espèces"]
+
+CATEGORIZE_LOG_FILE = "/volume1/docker/firefly/ai_categorize.log"
+
+# ============================================================
+# AI WEEKLY ANALYSIS  (firefly_ai_analysis.py)
+# ============================================================
+
+ANALYSIS_LOOKBACK_DAYS = 7
+ANALYSIS_MAX_TRANSACTIONS = 300
+ANALYSIS_LAST_RUN_FILE = "/volume1/docker/firefly/ai_analysis_last_run.json"
+
+# ============================================================
+# FRAUD DETECTION  (firefly_fraud_detection.py)
+# ============================================================
+
+FRAUD_LOOKBACK_DAYS = 30
+AMOUNT_STDDEV_THRESHOLD = 3
+NIGHT_HOUR_START = 0
+NIGHT_HOUR_END   = 6
+
+HOME_CURRENCIES = {"EUR"}
+HOME_IBAN_PREFIXES = {"FR", "BE", "LU", "CH", "DE", "NL"}
+
+ALERTED_IDS_FILE    = "/volume1/docker/firefly/fraud_alerted_ids.json"
+MERCHANT_WHITELIST_FILE = "/volume1/docker/firefly/fraud_merchant_whitelist.txt"

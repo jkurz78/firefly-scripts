@@ -1,0 +1,228 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: Firefly-REDIS
+    hostname: firefly-redis
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    user: 1026:100
+    # Tune Redis for caching workload: limit memory, use LRU eviction
+    command: >
+      redis-server
+      --maxmemory 256mb
+      --maxmemory-policy allkeys-lru
+      --save ""
+      --appendonly no
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - /volume1/docker/firefly/redis:/data:rw
+    environment:
+      TZ: Europe/Paris
+    restart: on-failure:5
+
+  db:
+    image: postgres:16-alpine  # postgres:18 does not exist yet; 16 is current stable
+    container_name: Firefly-DB
+    hostname: firefly-db
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 256mb
+    # Performance tuning for a NAS/home-server workload
+    command: >
+      postgres
+      -c shared_buffers=256MB
+      -c effective_cache_size=512MB
+      -c work_mem=16MB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c max_connections=50
+      -c synchronous_commit=off
+    healthcheck:
+      test: ["CMD", "pg_isready", "-q", "-d", "firefly", "-U", "fireflyuser"]
+      timeout: 45s
+      interval: 10s
+      retries: 10
+    volumes:
+      - /volume1/docker/firefly/db:/var/lib/postgresql/data:rw  # fixed: was missing /data
+    environment:
+      POSTGRES_DB: firefly
+      POSTGRES_USER: fireflyuser
+      POSTGRES_PASSWORD: fireflypass
+    restart: on-failure:5
+
+  firefly:
+    image: fireflyiii/core:latest
+    container_name: Firefly
+    hostname: firefly
+    security_opt:
+      - no-new-privileges:true
+    shm_size: 512mb
+    healthcheck:
+      test: curl -f http://localhost:8080/health || exit 1  # /health is public, no auth, no log spam
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s  # give PHP time to boot before health checks fire
+    environment:
+      - MEMORY_LIMIT=512M          # 1G is excessive; 512M is plenty
+      - TRUSTED_PROXIES=**              # trust reverse proxy headers so redirects use https://
+      - APP_URL=https://firefly.feucherolles.net
+      - DISABLE_CSP_HEADER=true             # allow OAuth form to POST to importer.feucherolles.net
+      - SESSION_DOMAIN=.feucherolles.net   # share session cookie across subdomains during OAuth flow
+      - SANCTUM_STATEFUL_DOMAINS=importer.feucherolles.net,firefly.feucherolles.net
+      - CACHE_DRIVER=redis
+      - SESSION_DRIVER=redis
+      - REDIS_HOST=firefly-redis
+      - REDIS_PORT=6379
+      - QUEUE_CONNECTION=sync      # sync = rules fire immediately on transaction creation (like before)
+      - DB_CONNECTION=pgsql
+      - DB_HOST=firefly-db
+      - DB_PORT=5432
+      - DB_DATABASE=firefly
+      - DB_USERNAME=fireflyuser
+      - DB_PASSWORD=fireflypass
+    volumes:
+      - /volume1/docker/firefly/upload:/var/www/html/storage/upload:rw
+      - /volume1/docker/firefly/ff3-ofx:/var/www/html/public/ofx
+    ports:
+      - 6182:8080
+    restart: on-failure:5
+    depends_on:
+      db:
+        condition: service_healthy  # wait for DB to be truly ready, not just started
+      redis:
+        condition: service_healthy
+
+  # Interactive importer — OAuth, supports multiple user accounts
+  importer:
+    image: fireflyiii/data-importer:latest
+    container_name: Firefly-Importer
+    hostname: firefly-importer
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["/eb-entrypoint.sh"]
+    environment:
+      - FIREFLY_III_URL=https://firefly.feucherolles.net
+      - VANITY_URL=https://firefly.feucherolles.net
+      - REDIS_HOST=firefly-redis
+      - REDIS_PORT=6379
+      - IMPORT_DEFAULT_APPLY_RULES=true
+      - TRUSTED_PROXIES=**
+      - ENABLE_BANKING_APP_ID=YOUR_APP_ID
+      - FIREFLY_III_CLIENT_ID=YOUR_CLIENT_ID
+    volumes:
+      - /volume1/docker/firefly/importer:/var/www/html/storage/upload:rw
+      - /volume1/docker/firefly/importer/eb_private.key:/secrets/eb_private.key:ro
+      - /volume1/docker/firefly/eb-entrypoint.sh:/eb-entrypoint.sh:ro
+    ports:
+      - 6192:8080
+    restart: on-failure:5
+    depends_on:
+      firefly:
+        condition: service_healthy
+
+  # Headless autoimport — PAT-based, used by cron for nightly bank transaction pulls
+  importer-auto:
+    image: fireflyiii/data-importer:latest
+    container_name: Firefly-Importer-Auto
+    hostname: firefly-importer-auto
+    security_opt:
+      - no-new-privileges:true
+    entrypoint: ["/eb-entrypoint.sh"]
+    ports:
+      - "127.0.0.1:8088:8080"    # localhost only — for manual trigger script
+    environment:
+      - FIREFLY_III_URL=https://firefly.feucherolles.net
+      - VANITY_URL=https://firefly.feucherolles.net
+      - REDIS_HOST=firefly-redis
+      - REDIS_PORT=6379
+      - IMPORT_DEFAULT_APPLY_RULES=true
+      - TRUSTED_PROXIES=**
+      - ENABLE_BANKING_APP_ID=YOUR_APP_ID
+      - FIREFLY_III_ACCESS_TOKEN=YOUR_PERSONAL_ACCESS_TOKEN
+      - AUTO_IMPORT_SECRET=YOUR_AUTO_IMPORT_SECRET
+      - CAN_POST_AUTOIMPORT=true
+      - IMPORT_DIR_ALLOWLIST=/var/www/html/storage/upload
+      - LOG_CHANNEL=single
+      - MAIL_MAILER=smtp
+      - MAIL_HOST=your.smtp.host
+      - MAIL_PORT=587
+      - MAIL_USERNAME=your@email.com
+      - MAIL_PASSWORD=yourpassword
+      - MAIL_ENCRYPTION=tls
+      - MAIL_FROM_ADDRESS=firefly@feucherolles.net
+      - MAIL_DESTINATION=your@email.com
+    volumes:
+      - /volume1/docker/firefly/importer:/var/www/html/storage/upload:rw
+      - /volume1/docker/firefly/importer/eb_private.key:/secrets/eb_private.key:ro
+      - /volume1/docker/firefly/eb-entrypoint.sh:/eb-entrypoint.sh:ro
+      - /volume1/docker/firefly/logs/importer-auto.log:/var/www/html/storage/logs/laravel.log:rw
+    restart: on-failure:5
+    depends_on:
+      firefly:
+        condition: service_healthy
+
+  cron:
+    image: alpine:latest
+    container_name: Firefly-Cron
+    hostname: firefly-cron
+    security_opt:
+      - no-new-privileges:true
+    command:
+      - sh
+      - -c
+      - |
+        # Install tzdata so crond respects TZ — Alpine crond ignores TZ env without it
+        apk add --no-cache tzdata
+        cp /usr/share/zoneinfo/Europe/Paris /etc/localtime
+        echo "Europe/Paris" > /etc/timezone
+        echo '0 5 * * * wget -qO- --post-data="" http://firefly-importer-auto:8080/autoimport?secret=CHANGE_THIS_TO_A_RANDOM_16CHAR_STRING\&directory=/var/www/html/storage/upload
+        30 5 * * * wget -qO- http://firefly:8080/api/v1/cron/9610001d2871a8622ea5bf5e65fe25db' | crontab -
+        crond -f -L /dev/stdout
+    environment:
+      TZ: Europe/Paris
+    restart: on-failure:5
+    depends_on:
+      firefly:
+        condition: service_healthy  # don't run cron until app is actually ready
+
+  # Transaction validator — one-click VERIFIED tag from email links
+  validator:
+    image: python:3.11-slim
+    container_name: Firefly-Validator
+    hostname: firefly-validator
+    security_opt:
+      - no-new-privileges:true
+    command: >
+      sh -c "pip install --no-cache-dir flask requests -q &&
+             python3 /app/firefly_validator.py"
+    ports:
+      - "8089:8089"    # reverse proxy validator.feucherolles.net → 8089
+    environment:
+      - FIREFLY_URL=http://firefly:8080
+      - FIREFLY_PUBLIC_URL=https://firefly.feucherolles.net
+      - FIREFLY_TOKEN=YOUR_PERSONAL_ACCESS_TOKEN
+      - VALIDATOR_SECRET=YOUR_RANDOM_32CHAR_SECRET
+      - VALIDATOR_TOKEN_EXPIRY_HOURS=24
+      - VERIFIED_TAG=VERIFIED
+    volumes:
+      - /volume1/docker/firefly/firefly_validator.py:/app/firefly_validator.py:ro
+    healthcheck:
+      test: ["CMD-SHELL", "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8089/health')\" || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+    restart: on-failure:5
+    depends_on:
+      firefly:
+        condition: service_healthy
