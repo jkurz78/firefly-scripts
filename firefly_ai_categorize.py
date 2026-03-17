@@ -309,7 +309,16 @@ INSTRUCTIONS :
 Pour chaque transaction, détermine :
 1. "category_name" — la catégorie la plus appropriée parmi celles disponibles (ou null si aucune ne convient)
 2. "budget_name" — le budget approprié parmi ceux disponibles (null pour les dépôts ou si hors budget)
-3. "destination_name" — le nom propre du marchand/bénéficiaire (normalise les noms bruts de banque)
+3. "destination_name" — le nom de l'enseigne uniquement, sans ville, sans arrondissement, sans numéro de magasin, sans code postal, sans département.
+   Exemples de normalisation :
+   - "DARTY PLAISIR" → "Darty"
+   - "GRAND FRAIS LES CLAYES" → "Grand Frais"
+   - "CARREFOUR CITY PARIS 11" → "Carrefour City"
+   - "LECLERC DRIVE VERSAILLES" → "E.Leclerc Drive"
+   - "AMAZON EU SARL" → "Amazon"
+   - "SNCF INTERNET" → "SNCF"
+   Exception : si le nom de lieu fait partie du nom officiel de l'enseigne (ex: "Bon Marché", "Galeries Lafayette"), le conserver.
+   Si c'est un virement ou prélèvement entre particuliers, conserver le nom complet.
 4. "notes" — une description courte et lisible en français (ex: "Courses alimentaires", "Abonnement streaming", "Remboursement santé")
 5. "confidence" — ta confiance entre 0.0 et 1.0
 6. "reason" — brève justification si confidence < {CONFIDENCE_THRESHOLD} (sinon null)
